@@ -207,16 +207,7 @@ class GIFFrame extends Image {
 		super('2d', width, height, {
 			I: {
 				width, height,
-				getPixels: !img.packed.interlaceFlag
-					? async (options) => img.indices
-					: async (options) => {
-						const out = new Uint8Array(width * height);
-						let src = 0;
-						for (const [start, step] of [[0, 8], [4, 8], [2, 4], [1, 2]] as const)
-							for (let y = start; y < height; y += step, src += width)
-								out.set(img.indices.subarray(src, src + width), y * width);
-						return out;
-					}
+				getPixels: async (options) => img.indices
 			}
 		});
 
