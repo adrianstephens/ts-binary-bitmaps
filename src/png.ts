@@ -1,18 +1,15 @@
 import * as bin from '@isopodlabs/binary';
-import {BaseImage, Options, Result, PlaneName, concatenateBuffers, greyToRgb, putRgba} from './common';
+import {Image, Options, PlaneName, concatenateBuffers} from './common';
 
 const u8 = bin.UINT8;
 const u16be = bin.UINT16_BE;
 const u32be = bin.UINT32_BE;
 
-const Pixel32Array	= bin.utils.BitAdapterTypedArray(bin.utils.BitFields(0, { b: 8, g: 8, r: 8, a: 8 } as const));
+const Pixel32Array	= bin.utils.BitFieldsTypedArray({ b: 8, g: 8, r: 8, a: 8 } as const);
 
 //-----------------------------------------------------------------------------
 // PNG
 //-----------------------------------------------------------------------------
-
-// bytes per pixel for each PNG color type
-const channelCount = [1, 0, 3, 1, 2, 0, 4];
 
 const PNGType = {	//Bit Depths
 	gray:	    0,	// 1,2,4,8,16
@@ -147,6 +144,8 @@ function paethPredictor(a: number, b: number, c: number) {
 	return pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
 }
 
+const channelCount = [1, 0, 3, 1, 2, 0, 4];
+
 const PNGPlanes: (PlaneName|undefined)[] = [
 	'Y',	// 1,2,4,8,16
 	undefined,
@@ -156,58 +155,29 @@ const PNGPlanes: (PlaneName|undefined)[] = [
 	undefined, 
 	'RGBA',	// 8,16
 ];
-export class PNG extends BaseImage {
+
+export class PNG extends Image {
 	palette?: bin.utils.TypedArray<{r: number, g: number, b: number, a: number }>;
 	colorType: number;
 	bitDepth: number;
 
 	constructor(ihdr: Extract<PNGChunk, {type: "IHDR"}>, pixels: Uint8Array, palette?: bin.utils.TypedArray<{r: number, g: number, b: number, a: number }>) {
 		const {width, height, colorType, bitDepth} = ihdr;
-		const planes = PNGPlanes[colorType]!;
-		super('2d', width, height, {
-			[planes]: {
-				width, height,
-				mips: [pixels],
-			}
-		});
-		this.palette = palette;
-		this.colorType = colorType;
-		this.bitDepth = bitDepth;
-	}
-	async getPixels(options: Options): Promise<Result> {
-		const bytes = (Object.values(this.planes)[0]).mips[0];
-		const pixels = new Uint8Array(this.width * this.height * 4);
-		switch (Object.keys(this.planes)[0] as PlaneName) {
-			case 'Y':
-				for (let i = 0, j = 0; i < bytes.length; i += 1, j += 4) {
-					greyToRgb(pixels, j, bytes[i]);
-					pixels[j + 3] = 255;
-				}
-				break;
-			case 'RGB':
-				for (let i = 0, j = 0; i < bytes.length; i += 3, j += 4)
-					putRgba(pixels, j, bytes[i], bytes[i + 1], bytes[i + 2], 255);
-				break;
-			case 'I':
-				for (let i = 0, j = 0; i < bytes.length; i += 1, j += 4) {
-					const col = this.palette![bytes[i]];
-					putRgba(pixels, j, col.r, col.g, col.b, col.a);
-				}
-				break;
-			case 'YA':
-				for (let i = 0, j = 0; i < bytes.length; i += 2, j += 4) {
-					greyToRgb(pixels, j, bytes[i]);
-					pixels[j + 3] = bytes[i + 1];
-				}
-				break;
-			case 'RGBA':
-				for (let i = 0, j = 0; i < bytes.length; i += 4, j += 4)
-					putRgba(pixels, j, bytes[i], bytes[i + 1], bytes[i + 2], bytes[i + 3]);
-				break;
-			default:
-				throw new Error(`Unsupported PNG color type: ${this.colorType}`);
+		super('2d', width, height);
+		this.planes[PNGPlanes[colorType]!] = {
+			width,
+			height,
+			getPixels: async (_options: Options) => pixels
+		};
+		if (palette) {
+			this.unpalette = i => {
+				const col = palette[i];
+				return [col.r, col.g, col.b];
+			};
 		}
-		return {width: this.width, height: this.height, pixels};
+		this.palette	= palette;
+		this.colorType	= colorType;
+		this.bitDepth	= bitDepth;
 	}
 
 	static async load(data: Uint8Array): Promise<PNG> {
@@ -222,9 +192,8 @@ export class PNG extends BaseImage {
 		
 		// Decompress and unfilter
 		const raw		= await bin.decompress('deflate')(compressed);
-		const bpp		= (channelCount[ihdr.colorType] * ihdr.bitDepth) >> 3;
-		const width		= ihdr.width;
-		const stride	= width * bpp;
+		const bpp		= (channelCount[ihdr.colorType] * ihdr.bitDepth + 7) >> 3;
+		const stride	= (ihdr.width * channelCount[ihdr.colorType] * ihdr.bitDepth + 7) >> 3;
 		const pixels	= new Uint8Array(stride * ((raw.length / (stride + 1)) | 0));
 
 		for (let y = 0, src = 0, dst = 0; dst < pixels.length; y++, dst += stride) {
@@ -233,16 +202,16 @@ export class PNG extends BaseImage {
 			const prev	= y > 0 ? pixels.subarray(dst - stride, dst) : null;
 			const cur	= pixels.subarray(dst, dst + stride);
 
-			for (let x = 0; x < stride; x++) {
-				const a = x >= bpp ? cur[x - bpp] : 0;
-				const b = prev ? prev[x] : 0;
-				const c = prev && x >= bpp ? prev[x - bpp] : 0;
-				cur[x]	= filter === PNGFilter.None    ? row[x]
-						: filter === PNGFilter.Sub     ? (row[x] + a) & 0xFF
-						: filter === PNGFilter.Up      ? (row[x] + b) & 0xFF
-						: filter === PNGFilter.Average ? (row[x] + ((a + b) >> 1)) & 0xFF
-						: (row[x] + paethPredictor(a, b, c)) & 0xFF; // filter 4
-			}
+			const filters: Record<number, (x: number)=>number> =  {
+				[PNGFilter.None]:		x => row[x],
+				[PNGFilter.Sub]:		x => (row[x] + (x >= bpp ? cur[x - bpp] : 0)) & 0xFF,
+				[PNGFilter.Up]:			x => (row[x] + (prev ? prev[x] : 0)) & 0xFF,
+				[PNGFilter.Average]:	x => (row[x] + (((x >= bpp ? cur[x - bpp] : 0) + (prev ? prev[x] : 0)) >> 1)) & 0xFF,
+				[PNGFilter.Paeth]:		x => (row[x] + paethPredictor(x >= bpp ? cur[x - bpp] : 0, prev ? prev[x] : 0, prev && x >= bpp ? prev[x - bpp] : 0)) & 0xFF
+			};
+			const f = filters[filter];
+			for (let x = 0; x < stride; x++)
+				cur[x]	= f(x);
 		}
 
 		return new PNG(ihdr, pixels, png.chunks.find(c => c.type === 'PLTE')?.palette);

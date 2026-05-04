@@ -8,6 +8,8 @@ export {JPEG} from './jpeg';
 export {GIF} from './gif';
 export {DDS} from './dds';
 export {PSD} from './psd';
+export {TGA} from './tga';
+export {TIFF} from './tiff';
 
 import {configureDecompression, configureCompression} from '@isopodlabs/binary';
 

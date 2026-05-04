@@ -1,5 +1,5 @@
 import * as bin from '@isopodlabs/binary';
-import {BaseImage, Options, Plane, PlaneName, PlaneType, Result, Type, concatenateBuffers, putRgb, putRgba, ycbcrToRgb, copyPlane, copyPlane0, mipSize} from './common';
+import {Image, Options, PlaneName, PlaneType, Result, Type, concatenateBuffers, putRgb, putRgba, ycbcrToRgb, to255, mipSize} from './common';
 
 const u32 = bin.UINT32_LE;
 
@@ -133,7 +133,7 @@ const DXGI_FORMAT = {
 	BC3_PREMUL:				0x80000001, // not an official DXGI format, but commonly used in legacy DXT4 files
 } as const;
 
-const rgb565 = bin.utils.BitFields(0, { r: 5, g: 6, b: 5 } as const);
+const rgb565 = bin.utils.BitFields(0, { r: to255(5), g: to255(6), b: to255(5) } as const);
 
 const BC1 = {
 	color0:	16,
@@ -185,59 +185,52 @@ function BCalphas(a0: number, a1: number) {
 	];
 }
 
-const r8g8b8a8		= bin.utils.BitAdapterTypedArray(bin.utils.BitFields(0, { r: 8,	g: 8, b: 8, a: 8 } as const));
-const r8g8			= bin.utils.BitAdapterTypedArray(bin.utils.BitFields(0, { r: 8,	g: 8 } as const));
-const r10g10b10a2	= bin.utils.BitAdapterTypedArray(bin.utils.BitFields(0, { r: 10, g: 10, b: 10, a: 2	} as const));
-const r16g16b16a16	= bin.utils.BitAdapterTypedArray(bin.utils.BitFields(0, { r: 16, g: 16, b: 16, a: 16 } as const));
-const r16g16		= bin.utils.BitAdapterTypedArray(bin.utils.BitFields(0, { r: 16, g: 16 } as const));
-const r4g4			= bin.utils.BitAdapterTypedArray(bin.utils.BitFields(0, { r: 4,	g: 4 } as const));
-const g4r4			= bin.utils.BitAdapterTypedArray(bin.utils.BitFields(0, { g: 4,	r: 4 } as const));
+const r8g8b8a8		= bin.utils.BitFieldsTypedArray({ r: 8,	g: 8, b: 8, a: 8 } as const);
+const r8g8			= bin.utils.BitFieldsTypedArray({ r: 8,	g: 8 } as const);
+const r10g10b10a2	= bin.utils.BitFieldsTypedArray({ r: 10, g: 10, b: 10, a: 2	} as const);
+const r16g16b16a16	= bin.utils.BitFieldsTypedArray({ r: 16, g: 16, b: 16, a: 16 } as const);
+const r16g16		= bin.utils.BitFieldsTypedArray({ r: 16, g: 16 } as const);
+const r4g4			= bin.utils.BitFieldsTypedArray({ r: 4,	g: 4 } as const);
+const g4r4			= bin.utils.BitFieldsTypedArray({ g: 4,	r: 4 } as const);
 
-const BC1BlockPixels = bin.utils.BitChain(bin.utils.BitFields(64, BC1), {
+const BC1BlockPixels = bin.utils.BitFieldChain(BC1, {
 	to(block) {
 		const alt		= block.color0 <= block.color1;
 		const colors	= BCcolors(block.color0, block.color1, alt);
 		const out		= new r8g8b8a8(16);
 		for (let i = 0; i < 16; i++) {
 			const x = block.indices[i];
-			const c = colors[x];
-			out[i] = {...c, a: alt && x === 3 ? 0 : 255};
+			out[i] = {...colors[x], a: alt && x === 3 ? 0 : 255};
 		}
 		return {block: out};
 	},
 	from() { throw new Error('DXT1 block write not supported'); },
 });
 
-const BC2BlockPixels = bin.utils.BitChain(bin.utils.BitFields(128, {alpha: bin.utils.BitArray(16,4), col: BC1} as const), {
+const BC2BlockPixels = bin.utils.BitFieldChain({alpha: bin.utils.BitArray(16,4), col: BC1} as const, {
 	to(block) {
 		const colors	= BCcolors(block.col.color0, block.col.color1, false);
 		const out		= new r8g8b8a8(16);
-		for (let i = 0; i < 16; i++) {
-			const c = colors[block.col.indices[i]];
-			out[i] = {...c, a: block.alpha[i] * 17};
-		}
+		for (let i = 0; i < 16; i++)
+			out[i] = {...colors[block.col.indices[i]], a: block.alpha[i] * 17};
 		return {block: out};
 	},
 	from() { throw new Error('DXT3 block write not supported'); },
 });
 
-const BC3BlockPixels = bin.utils.BitChain(bin.utils.BitFields(128, {alpha: BC4, col: BC1} as const), {
+const BC3BlockPixels = bin.utils.BitFieldChain({alpha: BC4, col: BC1} as const, {
 	to(block) {
 		const alphas	= BCalphas(block.alpha.a0, block.alpha.a1);
 		const colors	= BCcolors(block.col.color0, block.col.color1, false);
 		const out		= new r8g8b8a8(16);
-		for (let i = 0; i < 16; i++) {
-			const a	= alphas[block.alpha.indices[i]];
-			const c	= colors[block.col.indices[i]];
-			out[i] = {...c, a};
-		}
-
+		for (let i = 0; i < 16; i++)
+			out[i] = {...colors[block.col.indices[i]], a: alphas[block.alpha.indices[i]]};
 		return {block: out};
 	},
 	from() { throw new Error('DXT5 block write not supported'); }
 });
 
-const BC4BlockPixels = bin.utils.BitChain(bin.utils.BitFields(64, BC4), {
+const BC4BlockPixels = bin.utils.BitFieldChain(BC4, {
 	to(block) {
 		const alphas	= BCalphas(block.a0, block.a1);
 		const out		= new Uint8Array(16);
@@ -248,7 +241,7 @@ const BC4BlockPixels = bin.utils.BitChain(bin.utils.BitFields(64, BC4), {
 	from() { throw new Error('BC4 block write not supported'); }
 });
 
-const BC5BlockPixels = bin.utils.BitChain(bin.utils.BitFields(128, {r: BC4, g: BC4} as const), {
+const BC5BlockPixels = bin.utils.BitFieldChain({r: BC4, g: BC4} as const, {
 	to(block) {
 		const reds	= BCalphas(block.r.a0, block.r.a1);
 		const greens	= BCalphas(block.g.a0, block.g.a1);
@@ -269,36 +262,36 @@ interface LAYOUT {
 
 const LayoutInfo: Record<string, LAYOUT | LAYOUT[]> = {
 	UNKNOWN:			{ plane: '?', 		array: Uint8Array },
-	R32G32B32A32:		{ plane: 'RGBA', 	array: bin.utils.BitAdapterTypedArray(bin.utils.BitFields(0, { r: 32, g: 32, b: 32, a: 32	}))},
-	R32G32B32:			{ plane: 'RGB', 	array: bin.utils.BitAdapterTypedArray(bin.utils.BitFields(0, { r: 32, g: 32, b: 32 }))},
+	R32G32B32A32:		{ plane: 'RGBA', 	array: bin.utils.BitFieldsTypedArray({ r: 32, g: 32, b: 32, a: 32	})},
+	R32G32B32:			{ plane: 'RGB', 	array: bin.utils.BitFieldsTypedArray({ r: 32, g: 32, b: 32 })},
 	R16G16B16A16:		{ plane: 'RGBA', 	array: r16g16b16a16 },
-	R32G32:				{ plane: 'RG', 		array: bin.utils.BitAdapterTypedArray(bin.utils.BitFields(0, { r: 32, g: 32 }))},
-	R32G8X24:			{ plane: 'RG', 		array: bin.utils.BitAdapterTypedArray(bin.utils.BitFields(0, { r: 32, g: 8 }))},
+	R32G32:				{ plane: 'RG', 		array: bin.utils.BitFieldsTypedArray({ r: 32, g: 32 })},
+	R32G8X24:			{ plane: 'RG', 		array: bin.utils.BitFieldsTypedArray({ r: 32, g: 8 })},
 	R10G10B10A2:		{ plane: 'RGBA', 	array: r10g10b10a2 },
-	R11G11B10:			{ plane: 'RGB', 	array: bin.utils.BitAdapterTypedArray(bin.utils.BitFields(0, { r: 11, g: 11, b: 10	}))},
+	R11G11B10:			{ plane: 'RGB', 	array: bin.utils.BitFieldsTypedArray({ r: 11, g: 11, b: 10	})},
 	R8G8B8A8:			{ plane: 'RGBA', 	array: r8g8b8a8 },
 	R16G16:				{ plane: 'RG', 		array: r16g16 },
 	R32:				{ plane: 'R', 		array: Uint32Array },
-	R24G8:				{ plane: 'RG', 		array: bin.utils.BitAdapterTypedArray(bin.utils.BitFields(0, { r: 24, g: 8 }))},
+	R24G8:				{ plane: 'RG', 		array: bin.utils.BitFieldsTypedArray({ r: 24, g: 8 })},
 	R8G8:				{ plane: 'RG', 		array: r8g8 },
 	R16:				{ plane: 'R', 		array: Uint16Array },
 	R8:					{ plane: 'R', 		array: Uint8Array },
 	A8:					{ plane: 'A', 		array: Uint8Array },
 	R1:					{ plane: 'R', 		array: bin.utils.UintTypedArray(1) },
-	B5G6R5:				{ plane: 'RGB', 	array: bin.utils.BitAdapterTypedArray(bin.utils.BitFields(0, { r: 5, g: 6, b: 5 }))},
-	B5G5R5A1:			{ plane: 'RGBA', 	array: bin.utils.BitAdapterTypedArray(bin.utils.BitFields(0, { r: 5, g: 5, b: 5, a: 1 }))},
-	R4G4B4A4:			{ plane: 'RGBA', 	array: bin.utils.BitAdapterTypedArray(bin.utils.BitFields(0, { r: 4, g: 4, b: 4, a: 4 }))},
-	R9G9B9E5:			{ plane: 'RGB', 	array: bin.utils.BitAdapterTypedArray(bin.utils.BitFields(0, { r: 9, g: 9, b: 9 }))},
-	R8G8_B8G8:			{ plane: 'RGBA', 	array: bin.utils.BitAdapterTypedArray(bin.utils.BitFields(0, { r: 8, g: 8, b: 8, a: 8 }))},
-	G8R8_G8B8:			{ plane: 'RGBA', 	array: bin.utils.BitAdapterTypedArray(bin.utils.BitFields(0, { r: 8, g: 8, b: 8, a: 8 }))},
-	BC1:				{ plane: 'RGBA', 	array: bin.utils.BitAdapterTypedArray(BC1BlockPixels) },
-	BC2:				{ plane: 'RGBA', 	array: bin.utils.BitAdapterTypedArray(BC2BlockPixels) },
-	BC3:				{ plane: 'RGBA', 	array: bin.utils.BitAdapterTypedArray(BC3BlockPixels) },
-	BC4:				{ plane: 'R', 		array: bin.utils.BitAdapterTypedArray(BC4BlockPixels) },
-	BC5:				{ plane: 'RG', 		array: bin.utils.BitAdapterTypedArray(BC5BlockPixels) },
-	//BC6:				{ plane: '?', 		: bin.utils.BitAdapterTypedArray(BC6BlockPixels) },
-	//BC7:				{ plane: '?', 		: bin.utils.BitAdapterTypedArray(BC7BlockPixels) },
-	R16G8:				{ plane: 'RG', 		array: bin.utils.BitAdapterTypedArray(bin.utils.BitFields(0, { r: 16, g: 8	}))},
+	B5G6R5:				{ plane: 'RGB', 	array: bin.utils.BitFieldsTypedArray({ r: 5, g: 6, b: 5 })},
+	B5G5R5A1:			{ plane: 'RGBA', 	array: bin.utils.BitFieldsTypedArray({ r: 5, g: 5, b: 5, a: 1 })},
+	R4G4B4A4:			{ plane: 'RGBA', 	array: bin.utils.BitFieldsTypedArray({ r: 4, g: 4, b: 4, a: 4 })},
+	R9G9B9E5:			{ plane: 'RGB', 	array: bin.utils.BitFieldsTypedArray({ r: 9, g: 9, b: 9 })},
+	R8G8_B8G8:			{ plane: 'RGBA', 	array: bin.utils.BitFieldsTypedArray({ r: 8, g: 8, b: 8, a: 8 })},
+	G8R8_G8B8:			{ plane: 'RGBA', 	array: bin.utils.BitFieldsTypedArray({ r: 8, g: 8, b: 8, a: 8 })},
+	BC1:				{ plane: 'RGBA', 	array: bin.utils.BitFieldsTypedArray(BC1BlockPixels) },
+	BC2:				{ plane: 'RGBA', 	array: bin.utils.BitFieldsTypedArray(BC2BlockPixels) },
+	BC3:				{ plane: 'RGBA', 	array: bin.utils.BitFieldsTypedArray(BC3BlockPixels) },
+	BC4:				{ plane: 'R', 		array: bin.utils.BitFieldsTypedArray(BC4BlockPixels) },
+	BC5:				{ plane: 'RG', 		array: bin.utils.BitFieldsTypedArray(BC5BlockPixels) },
+	//BC6:				{ plane: '?', 		: bin.utils.BitFieldsTypedArray(BC6BlockPixels) },
+	//BC7:				{ plane: '?', 		: bin.utils.BitFieldsTypedArray(BC7BlockPixels) },
+	R16G8:				{ plane: 'RG', 		array: bin.utils.BitFieldsTypedArray({ r: 16, g: 8	})},
 	R4G4:				{ plane: 'RG', 		array: r4g4 },
 
 	AYUV:				{ plane: 'YCbCrA', 	array: r8g8b8a8 },
@@ -307,7 +300,7 @@ const LayoutInfo: Record<string, LAYOUT | LAYOUT[]> = {
 	NV12:				[{ plane: 'Y', 		array: Uint8Array},		{ plane: 'CbCr', array: r8g8}],
 	P010:				[{ plane: 'Y', 		array: Uint16Array },	{ plane: 'CbCr', array: r16g16}],
 	P016:				[{ plane: 'Y', 		array: Uint16Array },	{ plane: 'CbCr', array: r16g16}],
-	YUY2:				{ plane: 'YCbCr', 	array: bin.utils.BitAdapterTypedArray(bin.utils.BitFields(0, { y0: 8, u0: 8, y1: 8, v0: 8 }))},
+	YUY2:				{ plane: 'YCbCr', 	array: bin.utils.BitFieldsTypedArray({ y0: 8, u0: 8, y1: 8, v0: 8 })},
 	Y210:				[{ plane: 'Y', 		array: Uint16Array },	{ plane: 'CbCr', array: r16g16, hscale: 2, vscale: 2}],
 	Y216:				[{ plane: 'Y', 		array: Uint16Array },	{ plane: 'CbCr', array: r16g16, hscale: 2, vscale: 2}],
 	NV11:				[{ plane: 'Y', 		array: Uint8Array },	{ plane: 'CbCr', array: r16g16, hscale: 4}],
@@ -320,7 +313,7 @@ const LayoutInfo: Record<string, LAYOUT | LAYOUT[]> = {
 
 	P8:					{ plane: 'I', 		array: Uint8Array },
 	A8P8:				{ plane: 'IA', 		array: r8g8 },
-	B4G4R4A4:			{ plane: 'RGBA', 	array: bin.utils.BitAdapterTypedArray(bin.utils.BitFields(0, { b: 4, g: 4, r: 4, a: 4 }))},
+	B4G4R4A4:			{ plane: 'RGBA', 	array: bin.utils.BitFieldsTypedArray({ b: 4, g: 4, r: 4, a: 4 })},
 };
 
 const FourCCs: Record<string, keyof typeof DXGI_FORMAT> = {
@@ -513,44 +506,37 @@ const DDSSpec = {
 function MaskPixels(bits: number, r: number, g: number, b: number, a: number) : bin.utils.BitAdapter<number, any> {
 	function getMaskConsts(mask: number) {
 		const shift = mask ? bin.utils.lowestSetIndex(mask) : 0;
-		return [shift, mask ? 255 / (mask >> shift) : 1];
+		return [shift, mask ? 255 / (mask >>> shift) : 1];
 	}
 	const [rS, rX] = getMaskConsts(r);
 	const [gS, gX] = getMaskConsts(g);
 	const [bS, bX] = getMaskConsts(b);
 	const [aS, aX] = getMaskConsts(a);
-	/*
-	return {
-		bits,
-		to: (v: number) => ({r: ((v & r) >> rS) * rX, g: ((v & g) >> gS) * gX, b: ((v & b) >> bS) * bX, a: ((v & a) >> aS) * aX}),
-		from: (x: {r: number, g: number, b: number, a: number}) =>	(((x.r / rX) << rS) & r) | (((x.g / gX) << gS) & g) | (((x.b / bX) << bS) & b) | (((x.a / aX) << aS) & a)
-	};
-	*/
+
 	// one of: R, RG, RGB, RGBA, RA, RGA
-	const got = (r ? 1 : 0) + (g ? 2 : 0) + (b ? 4 : 0) + (a ? 8 : 0);
-	switch (got) {
+	switch ((r ? 1 : 0) + (g ? 2 : 0) + (b ? 4 : 0) + (a ? 8 : 0)) {
 		case 1: return {bits,
-			to: (v: number) => ((v & r) >> rS) * rX,
+			to: (v: number) => ((v & r) >>> rS) * rX,
 			from: (x: number) => ((x / rX << rS) & r)
 		};
 		case 3: return {bits,
-			to: (v: number) => ({r: ((v & r) >> rS) * rX, g: ((v & g) >> gS) * gX}),
+			to: (v: number) => ({r: ((v & r) >>> rS) * rX, g: ((v & g) >>> gS) * gX}),
 			from: (x: {r: number, g: number}) => (((x.r / rX << rS) & r) | ((x.g / gX << gS) & g))
 		};
 		case 7: return {bits,
-			to: (v: number) => ({r: ((v & r) >> rS) * rX, g: ((v & g) >> gS) * gX, b: ((v & b) >> bS) * bX}),
+			to: (v: number) => ({r: ((v & r) >>> rS) * rX, g: ((v & g) >>> gS) * gX, b: ((v & b) >>> bS) * bX}),
 			from: (x: {r: number, g: number, b: number}) => (((x.r / rX << rS) & r) | ((x.g / gX << gS) & g) | ((x.b / bX << bS) & b))
 		};
 		case 9: return {bits,
-			to: (v: number) => ({r: ((v & r) >> rS) * rX, a: ((v & a) >> aS) * aX}),
+			to: (v: number) => ({r: ((v & r) >>> rS) * rX, a: ((v & a) >>> aS) * aX}),
 			from: (x: {r: number, a: number}) => (((x.r / rX << rS) & r) | ((x.a / aX << aS) & a))
 		};
 		case 11: return {bits,
-			to: (v: number) => ({r: ((v & r) >> rS) * rX, g: ((v & g) >> gS) * gX, a: ((v & a) >> aS) * aX}),
+			to: (v: number) => ({r: ((v & r) >>> rS) * rX, g: ((v & g) >>> gS) * gX, a: ((v & a) >>> aS) * aX}),
 			from: (x: {r: number, g: number, a: number}) => (((x.r / rX << rS) & r) | ((x.g / gX << gS) & g) | ((x.a / aX << aS) & a))
 		};
 		case 15: return {bits,
-			to: (v: number) => ({r: ((v & r) >> rS) * rX, g: ((v & g) >> gS) * gX, b: ((v & b) >> bS) * bX, a: ((v & a) >> aS) * aX}),
+			to: (v: number) => ({r: ((v & r) >>> rS) * rX, g: ((v & g) >>> gS) * gX, b: ((v & b) >>> bS) * bX, a: ((v & a) >>> aS) * aX}),
 			from: (x: {r: number, g: number, b: number, a: number}) =>	(((x.r / rX << rS) & r) | ((x.g / gX << gS) & g) | ((x.b / bX << bS) & b) | ((x.a / aX << aS) & a))
 		};
 		default: throw new Error(`Unsupported channel mask combination: rMask=${r.toString(16)}, gMask=${g.toString(16)}, bMask=${b.toString(16)}, aMask=${a.toString(16)}`);
@@ -573,33 +559,46 @@ function linearize(src: bin.utils.TypedArray<any>, bw: number, bh: number) {
 	return out;
 }
 
-export class DDS extends BaseImage {
-	depth:		number;
-	palette?:	bin.utils.TypedArray<{r: number, g: number, b: number, a: number}>;
+function copyPlane<T>(src: ArrayLike<T>, width: number, height: number, srcStride: number, dstSize: number, put: (i: number, src: T) => void) {
+	for (let y = 0, j = 0; y < height; y++) {
+		for (let x = 0, i = y * srcStride; x < width; x++, i++, j += dstSize)
+			put(j, src[i]);
+	}
+}
 
-	constructor(dds: bin.ReadType<typeof DDSSpec>, planes: Partial<Record<PlaneName, Plane>>) {
+export class DDS extends Image {
+	depth:		number;
+
+	constructor(dds: bin.ReadType<typeof DDSSpec>, plane: PlaneName, public mips: bin.utils.TypedArray<any>[]) {
 		const {width, height, caps2} = dds.header;
 		const type: Type = caps2.VOLUME				? '3d'
 			: caps2.CUBEMAP							? 'cube'
 			: dds.dx10 && dds.dx10.arraySize > 1	? '2d-array'
 			: '2d';
-		super(type, width, height, planes);
-		this.depth	= type === '2d-array'	? dds.dx10.arraySize
+		const depth	= type === '2d-array'	? dds.dx10.arraySize
 					: type === 'cube'		? 6
 					: dds.header.depth || 1;
-		this.palette = dds.palette;
+
+		super(type, width, height, {[plane]: {width, height: height * depth}});
+		this.depth		= depth;
+		if (dds.palette)
+			this.unpalette	= i => {
+				const p = dds.palette[i];
+				return [p.r, p.g, p.b/*, p.a*/];
+			};
 	}
 
 	async getPixels(options: Options): Promise<Result> {
-		const plane0 =Object.keys(this.planes)[0] as PlaneName; 
-		const mip	= options.mip ?? 0;
-		const width	= mipSize(this.width, mip);
-		const depth	= this.type === '3d' ? mipSize(this.depth, mip) : this.depth;
-		let height	= mipSize(this.height, mip) * depth;
-		let stride	= width;
-		let src		= Object.values(this.planes)[0].mips[mip];
+		const mip		= options.mip ?? 0;
+		const width		= mipSize(this.width, mip);
+		const depth		= this.type === '3d' ? mipSize(this.depth, mip) : this.depth;
 
-		if (options.layer !== undefined) {
+		let plane0		= Object.keys(this.planes)[0] as PlaneName;
+		let height		= mipSize(this.height, mip) * depth;
+		let stride		= width;
+		let src			= this.mips[mip];
+
+		if (typeof options.layer == 'number') {
 			const layer = options.layer ?? 0;
 			if (layer >= depth)
 				throw new Error(`Requested layer ${layer} exceeds image depth ${depth}`);
@@ -608,13 +607,15 @@ export class DDS extends BaseImage {
 			height = this.height;
 		}
 
-		if (this.palette) {
-			const pixels = new Uint8Array(width * height * 4);
-			copyPlane0<PlaneType<'RGBA'>>(src, pixels, width * height, 4, (dst, i, src) => {
-				const p = this.palette![src.r];
-				putRgba(dst, i, p.r, p.g, p.b, p.a);
-			});
-			src = pixels;
+		const numpixels = width * height;
+		if (plane0 === 'I' && this.unpalette) {
+			const pixels = new Uint8Array(numpixels * 4);
+			for (let i = 0, j = 0; i < numpixels; i++, j += 4) {
+				const color = this.unpalette(src[i]);
+				putRgb(pixels, j, color[0], color[1], color[2]);
+			}
+			src		= pixels;
+			plane0	= 'RGB';
 
 		} else if ('block' in src[0]) {
 			src		= linearize(src, (width + 3) >> 2, (height + 3) >> 2);
@@ -627,16 +628,16 @@ export class DDS extends BaseImage {
 				case 'RGBA':
 				case 'RGB':
 				case 'RG':
-					copyPlane<PlaneType<'RGBA'>>(src, pixels, width, height, stride, 4, (dst, i, src) => putRgba(dst, i, src.r, src.g, src.b ?? 0, src.a ?? 255));
+					copyPlane<PlaneType<'RGBA'>>(src, width, height, stride, 4, (i, src) => putRgba(pixels, i, src.r, src.g, src.b ?? 0, src.a ?? 255));
 					break;
 				case 'YCbCr':
 				case 'YCbCrA':
-					copyPlane<PlaneType<'RGBA'>>(src, pixels, width, height, stride, 4, (dst, i, src) => {ycbcrToRgb(dst, i, src.r, src.g - 128, src.b - 128); dst[i + 3] = src.a ?? 255;});
+					copyPlane<PlaneType<'RGBA'>>(src, width, height, stride, 4, (i, src) => {ycbcrToRgb(pixels, i, src.r, src.g - 128, src.b - 128); pixels[i + 3] = src.a ?? 255;});
 					break;
 				default:
 					throw new Error('No plane available to extract RGBA pixels');
 			}
-			return {width, height, pixels};
+			return {plane: 'RGBA', width, height, pixels};
 
 		} else if (options.plane === 'RGB') {
 			const pixels = new Uint8Array(width * height * 3);
@@ -644,21 +645,21 @@ export class DDS extends BaseImage {
 				case 'RGBA':
 				case 'RGB':
 				case 'RG':
-					copyPlane<PlaneType<'RGB'>>(src, pixels, width, height, stride, 3, (dst, i, src) => putRgb(dst, i, src.r, src.g, src.b ??0));
+					copyPlane<PlaneType<'RGB'>>(src, width, height, stride, 3, (i, src) => putRgb(pixels, i, src.r, src.g, src.b ??0));
 					break;
 				case 'YCbCr':
-					copyPlane<PlaneType<'RGB'>>(src, pixels, width, height, stride, 3, (dst, i, src) => ycbcrToRgb(dst, i, src.r, src.g - 128, src.b - 128));
+					copyPlane<PlaneType<'RGB'>>(src, width, height, stride, 3, (i, src) => ycbcrToRgb(pixels, i, src.r, src.g - 128, src.b - 128));
 					break;
 				default:
 					throw new Error('No RGB plane available to extract RGB pixels');
 			}
-			return {width, height, pixels};
+			return {plane: 'RGB', width, height, pixels};
 
 		} else if (options.plane === 'YCbCr') {
 			const pixels = new Uint8Array(width * height * 3);
 			if (plane0 === 'YCbCr') {
-				copyPlane<PlaneType<'RGB'>>(src, pixels, width, height, stride, 3, (dst, i, src) => ycbcrToRgb(dst, i, src.r, src.g - 128, src.b - 128));
-				return {width, height, pixels};
+				copyPlane<PlaneType<'RGB'>>(src, width, height, stride, 3, (i, src) => putRgb(pixels, i, src.r, src.g, src.b));
+				return {plane: 'YCbCr', width, height, pixels};
 			}
 
 		}
@@ -693,14 +694,14 @@ export class DDS extends BaseImage {
 			}
 
 		} else {
-			arrayType = bin.utils.BitAdapterTypedArray(MaskPixels(
+			arrayType = bin.utils.BitFieldsTypedArray(MaskPixels(
 				dds.header.ddspf.RGBBitCount,
 				dds.header.ddspf.RBitMask,
 				dds.header.ddspf.GBitMask,
 				dds.header.ddspf.BBitMask,
 				dds.header.ddspf.ABitMask
 			));
-			plane = (fmtflags.RGB ? 'RGB' : fmtflags.YUV ? 'YCbCr' : fmtflags.LUMINANCE ? 'Y' : fmtflags.ALPHAONLY ? 'A' : '?') + (fmtflags.ALPHA ? 'A' : '');
+			plane = (fmtflags.RGB ? 'RGB' : fmtflags.YUV ? 'YCbCr' : fmtflags.LUMINANCE ? 'Y' : fmtflags.ALPHAONLY ? 'A' : '?') + (fmtflags.ALPHA ? 'A' : '') as PlaneName;
 		}
 			
 		if (!arrayType)
@@ -715,46 +716,51 @@ export class DDS extends BaseImage {
 		const height	= dds.header.height;
 		const depth		= (dds.dx10 && dds.dx10.arraySize) || (dds.header.caps2.CUBEMAP ? 6 : dds.header.depth) || 1;
 
-		if (dds.header.depth) {
-			for (let i = 0, offset = body.byteOffset; i < mipcount; i++) {
-				const w = mipSize(width, block + i);
-				const h = mipSize(height, block + i);
-				const d = mipSize(depth, i);
-
-				if (i === 0 && (flags.PITCH || flags.LINEARSIZE)) {
-					const length	= flags.PITCH ? h * d : d;
-					const size		= flags.PITCH ? w * bpp : w * h * bpp;
-					mips[0] = arrayType.from(concatenateBuffers(Array.from({ length }, (_, y) => 
-						new Uint8Array(data.buffer, data.byteOffset + y * pitch, size)
-					)));
-					offset += length * pitch;
-				} else {
-					mips[i] = new arrayType(body.buffer, offset, w * h * d);
-					offset += i === 0 && flags.LINEARSIZE ? dds.header.pitchOrLinearSize * d : mips[i].byteLength;
-				}
-			}
-		} else {
-			for (let s = 0, offset = body.byteOffset; s < depth; s++) {
-				for (let i = 0; i < mipcount; i++) {
+		try {
+			if (dds.header.depth) {
+				for (let i = 0, offset = body.byteOffset; i < mipcount; i++) {
 					const w = mipSize(width, block + i);
 					const h = mipSize(height, block + i);
+					const d = mipSize(depth, i);
 
-					if (i === 0 && flags.PITCH && pitch != w * bpp) {
-						mips[0] = arrayType.from(concatenateBuffers(Array.from({ length: h }, (_, y) =>
-							new Uint8Array(data.buffer, data.byteOffset + y * pitch, w * bpp)
+					if (i === 0 && (flags.PITCH || flags.LINEARSIZE)) {
+						const length	= flags.PITCH ? h * d : d;
+						const size		= flags.PITCH ? w * bpp : w * h * bpp;
+						mips[0] = arrayType.from(concatenateBuffers(Array.from({ length }, (_, y) => 
+							new Uint8Array(data.buffer, data.byteOffset + y * pitch, size)
 						)));
-						offset += h * pitch;
+						offset += length * pitch;
 					} else {
-						const pixels = new arrayType(body.buffer, offset, w * h);
-						offset += i === 0 && pitch && flags.LINEARSIZE ? pitch : pixels.byteLength;
-						if (!mips[i])
-							mips[i] = pixels;
-						else 
-							mips[i] = concatenateBuffers([mips[i], pixels]);
+						mips[i] = new arrayType(body.buffer, offset, w * h * d);
+						offset += i === 0 && flags.LINEARSIZE ? dds.header.pitchOrLinearSize * d : mips[i].byteLength;
+					}
+				}
+			} else {
+				for (let s = 0/*, offset = body.byteOffset*/; s < depth; s++) {
+					let offset = body.byteOffset + body.byteLength * s / depth;
+					for (let i = 0; i < mipcount; i++) {
+						const w = mipSize(width, block + i);
+						const h = mipSize(height, block + i);
+
+						if (i === 0 && flags.PITCH && pitch != w * bpp) {
+							mips[0] = arrayType.from(concatenateBuffers(Array.from({ length: h }, (_, y) =>
+								new Uint8Array(data.buffer, data.byteOffset + y * pitch, w * bpp)
+							)));
+							offset += h * pitch;
+						} else {
+							const pixels = new arrayType(body.buffer, offset, w * h);
+							offset += i === 0 && pitch && flags.LINEARSIZE ? pitch : pixels.byteLength;
+							if (!mips[i])
+								mips[i] = pixels;
+							else 
+								mips[i] = concatenateBuffers([mips[i], pixels]);
+						}
 					}
 				}
 			}
+		} catch(e) {
+			console.log(e);
 		}
-		return new DDS(dds, {[plane]: {width, height: height * depth, mips}});
+		return new DDS(dds, plane, mips);
 	}
 };

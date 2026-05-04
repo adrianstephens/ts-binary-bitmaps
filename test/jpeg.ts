@@ -1,5 +1,5 @@
 import * as bin from '@isopodlabs/binary';
-import {Image, PlaneName, clamp8} from './common';
+import {BaseImage, Plane, PlaneName, Options, Result, clamp8, getPixels, greyToRgb, ycbcrToRgb} from './common';
 
 const u8 = bin.UINT8;
 const u16be = bin.UINT16_BE;
@@ -86,7 +86,7 @@ class FrameComponent extends bin.Class({
 		super(s);
 		this.n	= this.h * this.v;
 	}
-/*
+
 	sampler(mi: number, maxH: number, maxV: number) {
 		const blocks = this.blocks.subarray(mi * this.n << 6);
 		const h = this.h;
@@ -105,7 +105,6 @@ class FrameComponent extends bin.Class({
 			};
 		};
 	}
-		*/
 }
 
 class SOF extends bin.Class(JPGblock({
@@ -176,12 +175,12 @@ function idctBlock(coeff: Int32Array, out: Uint8Array) {
 }
 
 interface DecodeComponent {
-	n:		number;
-	q:		ArrayLike<number>;
-	dc:		HuffTable;
-	ac:		HuffTable;
-	pred:	number;
-	blocks:	Uint8Array;
+	n: number;
+	q: ArrayLike<number>;
+	dc: HuffTable;
+	ac: HuffTable;
+	pred: number;
+	blocks: Uint8Array;
 }
 
 function decodeScan(components: DecodeComponent[], scan: Uint8Array, mcus: number, restartInterval: number) {
@@ -232,7 +231,8 @@ function decodeScan(components: DecodeComponent[], scan: Uint8Array, mcus: numbe
 			for (let i = 0; i < c.n; i++) {
 				block.fill(0);
 				const dcLen = c.dc.read(readBits);
-				c.pred += receiveExtend(readBits(dcLen), dcLen);
+				const dcDiff = receiveExtend(readBits(dcLen), dcLen);
+				c.pred += dcDiff;
 				block[0] = c.pred * c.q[0];
 
 				for (let k = 1, rs; k < 64 && (rs = c.ac.read(readBits));) {
@@ -242,7 +242,8 @@ function decodeScan(components: DecodeComponent[], scan: Uint8Array, mcus: numbe
 						k += rs >> 4;
 						if (k < 64) {
 							const acLen = rs & 0x0F;
-							block[zigzag[k]] = receiveExtend(readBits(acLen), acLen) * c.q[k];
+							const ac = receiveExtend(readBits(acLen), acLen);
+							block[zigzag[k]] = ac * c.q[k];
 							k++;
 						}
 					}
@@ -372,42 +373,118 @@ const JPEGSegment = {
 
 export type JPEGSegment = bin.ReadType<typeof JPEGSegment>;
 
-export class JPEG extends Image {
+export class JPEG extends BaseImage {
 
 	constructor(public sof: bin.ReadType<typeof SOF>) {
 		super('2d', sof.width, sof.height, {});
 
-		const mcusStride = Math.ceil(sof.width / (sof.maxH * 8));
-		const minId = sof.components.reduce((a, c) => Math.min(a, c.id), Infinity);
-
 		for (const c of sof.components) {
-			const width		= Math.ceil(sof.width * c.h / sof.maxH);
-			const height	= Math.ceil(sof.height * c.v / sof.maxV);
-			this.planes[['Y','Cb','Cr'][c.id - minId] as PlaneName] = {
-				width, height,
-				getPixels: async (options) => {
-					const out = new Uint8Array(width * height);
-					const blockX1 = Math.ceil(width / 8);
-					const blockY1 = Math.ceil(height / 8);
+			const name = c.id === 1 ? 'Y' : (c.id === 2 ? 'Cb' : (c.id === 3 ? 'Cr' : `?${c.id}`)) as PlaneName;
+			this.planes[name] = {
+				width:	Math.ceil(sof.width * c.h / sof.maxH),
+				height:	Math.ceil(sof.height * c.v / sof.maxV),
+				getPixels: async (x, y, w, h) => {
+					const pixels	= new Uint8Array(w * h);
+					const mx0 		= Math.floor(x / (c.h * 8)), mx1 = Math.ceil((x + w) / (c.h * 8));
+					const my0		= Math.floor(y / (c.v * 8)), my1 = Math.ceil((y + h) / (c.v * 8));
+					const mstride	= Math.ceil(sof.width / (sof.maxH * 8)) * c.h;
 
-					for (let by = 0; by < blockY1; by++) {
-						const mcuY = Math.floor(by / c.v) * mcusStride * c.n + (by % c.v) * c.h;
-						for (let bx = 0; bx < blockX1; bx++) {
-							const block = c.blocks.subarray((mcuY + (Math.floor(bx / c.h) * c.n + bx % c.h) << 6));
-							const blockX = bx << 3;
-							const blockY = by << 3;
-							const py1 = Math.min(height - blockY, 8);
-							const px1 = Math.min(width - blockX, 8);
-							for (let py = 0; py < py1; py++)
-								out.set(block.subarray(py << 3, (py << 3) + px1), (blockY + py) * width + blockX);
+					for (let my = my0; my < my1; my++) {
+						const y0	= Math.max(y, my * c.v * 8), y1 = Math.min(y + h, (my + 1) * c.v * 8);
+						for (let mx = mx0; mx < mx1; mx++ ) {
+							const x0	= Math.max(x, mx * c.h * 8), x1 = Math.min(x + w, (mx + 1) * c.h * 8);
+							const blocks = c.blocks.subarray(((my * mstride + mx) * c.n) << 6);
+
+							for (let yi = y0; yi < y1; yi++) {
+								const sy = yi - y0;
+								const by = sy >> 3;
+								const py = sy & 7;
+								const blocksx = blocks.subarray(((by * c.h) << 6) + (py << 3));
+
+								const row	= (yi - y) * w - x;
+								for (let xi = x0; xi < x1; xi++) {
+									const sx = xi - x0;
+									const bx = sx >> 3;
+									const px = sx & 7;
+									pixels[row + xi] = blocksx[(bx << 6) + px];
+								}
+							}
 						}
 					}
-					return out;
+					return pixels;
 				}
 			};
 		}
 	}
+	async getPixels(options: Options): Promise<Result> {
+		return getPixels(this, options);
+	}
 
+/*
+	async getPixels(options: Options): Promise<Result> {
+		const maxH		= this.sof.maxH;
+		const maxV		= this.sof.maxV;
+		const mcusX		= Math.ceil(this.width / (maxH * 8));
+		const mcusY		= Math.ceil(this.height / (maxV * 8));
+
+		let pixels: Uint8Array;
+
+		const plane		= this.planes[options.plane];
+		if (plane) {
+			return {
+				width: plane.width,
+				height: plane.height,
+				pixels: await plane.getPixels(0, 0, plane.width, plane.height)
+			};
+
+		} else {
+			const bpp	= options.plane === 'RGBA' ? 4 : 3;
+			pixels		= new Uint8Array(this.width * this.height * bpp);
+
+			for (let my = 0, mi = 0; my < mcusY; my++) {
+				const y0 = my * maxV * 8;
+				const y1 = Math.min(this.height, y0 + maxV * 8);
+
+				for (let mx = 0; mx < mcusX; mx++, mi++) {
+					const x0 = mx * maxH * 8;
+					const x1 = Math.min(this.width, x0 + maxH * 8);
+
+					const s0 = this.planes.Y!.mips[0](mi);
+					const s1 = this.planes.Cb?.mips[0](mi);
+					const s2 = this.planes.Cr?.mips[0](mi);
+					if (s1 && s2)  {
+						for (let y = y0; y < y1; y++) {
+							const sx0	= s0(y - y0);
+							const sx1	= s1(y - y0);
+							const sx2	= s2(y - y0);
+							const row	= y * this.width;
+							for (let x = x0; x < x1; x++)
+								ycbcrToRgb(pixels, (row + x) * bpp, sx0(x - x0), sx1(x - x0) - 128, sx2(x - x0) - 128);
+						}
+					} else {
+						for (let y = y0; y < y1; y++) {
+							const sx	= s0(y - y0);
+							const row	= y * this.width;
+							for (let x = x0; x < x1; x++)
+								greyToRgb(pixels, (row + x) * bpp, sx(x - x0));
+						}
+					}
+				}
+			}
+
+			if (options.plane === 'RGBA') {
+				for (let i = 0; i < pixels.length; i += 4)
+					pixels[i + 3] = 255;
+			}
+		}
+
+		return {
+			width: this.width,
+			height: this.height,
+			pixels
+		};
+	}
+*/
 	static load(data: Uint8Array): JPEG {
 		const segments = bin.read(new bin.stream(data), bin.RemainingArray(JPEGSegment));
 		const sof = segments.find(s => s.marker === JPEGMarker.SOF0);

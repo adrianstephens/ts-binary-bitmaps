@@ -1,10 +1,10 @@
 import * as bin from '@isopodlabs/binary';
-import {BaseImage, Options, Result,  concatenateBuffers, putRgba} from './common';
+import {Image, Options, Result, concatenateBuffers} from './common';
 
 const u8 = bin.UINT8;
 const u16 = bin.UINT16_LE;
 
-const Pixel24Array	= bin.utils.BitAdapterTypedArray(bin.utils.BitFields(0, { b: 8, g: 8, r: 8 } as const));
+const Pixel24Array	= bin.utils.BitFieldsTypedArray({ b: 8, g: 8, r: 8 } as const);
 
 //-----------------------------------------------------------------------------
 // GIF
@@ -105,7 +105,7 @@ const GIFImage = {
 		localColorTableFlag:	1,
 	} as const),
 
-	localPalette: 	bin.Optional(s => s.obj.packed.localColorTableFlag, bin.Buffer(s => 3 * (1 << (s.obj.packed.localColorTableSize + 1)))),
+	localPalette: 	bin.Optional(s => s.obj.packed.localColorTableFlag, bin.Buffer(s => 1 << (s.obj.packed.localColorTableSize + 1), Pixel24Array)),
 	lzwMinCodeSize:	u8,
 	indices:		bin.as(GIFSubBlocks, (lzwData: Uint8Array, s) => {
 		const {width, height, packed, lzwMinCodeSize } = s.obj as any;
@@ -127,12 +127,51 @@ const GIFImage = {
 	}),
 };
 
+/*	enum DISPOSAL {
+	NONE,			//0: No disposal specified. The decoder is not required to take any action.
+	NO_DISPOSE,		//1: Do not dispose. The graphic is to be left in place.
+	RESTORE_BG,		//2: Restore to background color. The area used by the graphic must be restored to the background color.
+	RESTORE_PREV,	//3: Restore to previous. The decoder is required to restore the area overwritten by the graphic with what was there prior to rendering the graphic.
+	//4-7: To be defined.
+};*/
+
+const GIFExtensionType = {
+	text:		0x01,
+	control:	0xf9,
+	comment:	0xfe,
+	app:		0xff,
+} as const;
+
 const GIFExtension = {
 	label:	u8,
-	data:	GIFSubBlocks,
+	data:	bin.as(GIFSubBlocks, (data, s) => new bin.stream(data as Uint8Array).read(bin.Switch('label', {
+		[GIFExtensionType.text]: {
+			left:			u16,
+			top:			u16,
+			width:			u16,
+			height:			u16,
+			cell_width:		u8, cell_height: u8,
+			flags:			u8,
+			foreground:		u8, background: u8
+		},
+		[GIFExtensionType.control]: {
+			packed:			bin.BitFields({has_transparent:1, userinput:1, disposal:3, unused:3}),
+			delay:			u16,
+			transparent:	u8,
+		},
+		[GIFExtensionType.comment]: {
+			comment:		bin.RemainingString(),
+		},
+		[GIFExtensionType.app]: {//app
+			app:			bin.String(8),
+			authentication: bin.String(3),
+			rest:			bin.Remainder,
+		}
+	}), s.obj))
 };
 
-const GIFblockType = {
+
+const GIFBlockType = {
 	image:		0x2C,
 	extension:	0x21,
 	eof:		0x3B,
@@ -155,36 +194,85 @@ const GIFSpec = {
 	globalPalette:	bin.Optional(s => s.obj.packed.globalColorTableFlag, bin.Buffer(s => 1 << (s.obj.packed.globalColorTableSize + 1), Pixel24Array)),
 
 	blocks:		bin.RemainingArray({
-		token: bin.as(u8, bin.EnumV(GIFblockType)), _: bin.Switch('token', {
-		[GIFblockType.image]:		GIFImage,
-		[GIFblockType.extension]:	GIFExtension,
-		[GIFblockType.eof]:			bin.Const(undefined),
+		token: bin.as(u8, bin.EnumV(GIFBlockType)), _: bin.Switch('token', {
+		[GIFBlockType.image]:		GIFImage,
+		[GIFBlockType.extension]:	GIFExtension,
+		[GIFBlockType.eof]:			bin.Const(undefined),
 	})}),
 };
 
-
-export class GIF extends BaseImage {
-	palette: bin.utils.TypedArray<{r: number, g: number, b: number}>;
-
-	constructor(gif: bin.ReadType<typeof GIFSpec>) {
-		const images = gif.blocks.filter(b => b.token === GIFblockType.image);
-		super('2d', gif.width, gif.height, {
+class GIFFrame extends Image {
+	constructor(img: bin.ReadType<typeof GIFImage>, public delay: number, globalPalette: bin.utils.TypedElement<typeof Pixel24Array>) {
+		const {width, height} = img;
+		super('2d', width, height, {
 			I: {
-				width: gif.width,
-				height: gif.height,
-				mips: [images[0].indices],
+				width, height,
+				getPixels: !img.packed.interlaceFlag
+					? async (options) => img.indices
+					: async (options) => {
+						const out = new Uint8Array(width * height);
+						let src = 0;
+						for (const [start, step] of [[0, 8], [4, 8], [2, 4], [1, 2]] as const)
+							for (let y = start; y < height; y += step, src += width)
+								out.set(img.indices.subarray(src, src + width), y * width);
+						return out;
+					}
 			}
 		});
-		this.palette = gif.globalPalette;
+
+		const palette = img.localPalette ?? globalPalette;
+		this.unpalette = i => {
+			const col = palette[i];
+			return [col.r, col.g, col.b];
+		};
 	}
-	async getPixels(options: Options): Promise<Result> {
-		const bytes = this.planes.I!.mips[0];
-		const pixels = new Uint8Array(bytes.length * 4);
-		for (let i = 0, j = 0; i < bytes.length; i += 1, j += 4) {
-			const col = this.palette[bytes[i]];
-			putRgba(pixels, j, col.r, col.g, col.b, 255);
+}
+
+export class GIF extends Image {
+	frames:	GIFFrame[] = [];
+	constructor(gif: bin.ReadType<typeof GIFSpec>) {
+		const {width, height}		= gif;
+		const frames: GIFFrame[]	= [];
+
+		let delay = 0;
+		for (const b of gif.blocks) {
+			if (b.token === GIFBlockType.extension) {
+				if (b.label === GIFExtensionType.control)
+					delay = b.data.delay;
+
+			} else if (b.token === GIFBlockType.image) {
+				frames.push(new GIFFrame(b, delay, gif.globalPalette));
+			}
 		}
-		return {width: this.width, height: this.height, pixels};
+
+		if (frames.length === 1) {
+			super('2d', width, height, frames[0].planes);
+		} else {
+			super('2d-array', width, height, frames[0].planes);
+			this.depth = frames.length;
+			this.frames = frames;
+		}
+
+		this.unpalette = i => {
+			const col = gif.globalPalette[i];
+			return [col.r, col.g, col.b];
+		};
+	}
+
+	getLayer(layer: string | number): Image | undefined {
+		return this.frames[+layer];
+	}
+
+	getPixels(options: Options): Promise<Result> {
+		let time = options.time;
+		if (time !== undefined) {
+			for (const f of this.frames) {
+				if (time < f.delay)
+					return f.getPixels(options);
+				time -= f.delay;
+			}
+		}
+		return super.getPixels(options);
 	}
 
 	static load(data: Uint8Array): GIF {

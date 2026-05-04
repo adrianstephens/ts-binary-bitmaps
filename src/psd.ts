@@ -1,5 +1,5 @@
 import * as bin from '@isopodlabs/binary';
-import {BaseImage, Options, Result, Plane, PlaneName, getPixels, concatenateBuffers} from './common';
+import {Image, Options, Result, PlaneName, getPixels, concatenateBuffers} from './common';
 
 const u8 = bin.UINT8;
 const u16 = bin.UINT16_BE;
@@ -26,7 +26,7 @@ const PSDPlanes: Record<keyof typeof PSDColorMode, PlaneName[]> = {
 	CMYK: 			['Cy', 'Ma', 'Ye', 'K'],
 	Multichannel: 	['Y'],
 	Duotone: 		['Y'],
-	Lab: 			['L', 'a', 'b'],
+	Lab: 			['L', 'La', 'Lb'],
 };
 
 const PSDCompression = {
@@ -138,7 +138,7 @@ const RESOURCE = {
 const PSDStringResource	= {value: bin.RemainingString('latin1')};
 
 const PSDImageResource = {
-	signature: bin.Expect(bin.String(4), '8BIM'),
+	signature: bin.Expect(bin.Aligned(2, bin.String(4)), '8BIM'),
 	id:		bin.as(u16, bin.EnumV(RESOURCE)),
 	name:	bin.String(u8, 'latin1'),
 	_:	bin.Size(bin.Aligned(2, u32), bin.Switch('id', {
@@ -164,35 +164,12 @@ const PSDImageResource = {
 	})),
 };
 
-const PSDLayerRecord = {
-	top:			i32,
-	left:			i32,
-	bottom:			i32,
-	right:			i32,
-	channelInfo:	bin.Array(u16, {
-		id:		i16,
-		length:	u32,
-	}),
-	blendSig:		bin.String(4),
-	blendMode:		bin.String(4),
-	opacity:		u8,
-	clipping:		u8,
-	flags:			u8,
-	filler:			u8,
-	extraData:		bin.Size(u32, {
-		layerMaskData:			bin.Buffer(u32, Uint8Array),
-		layerBlendingRanges:	bin.Buffer(u32, Uint8Array),
-		name: 					bin.String(u8, 'latin1', true),
-		additionalLayerInfo:	bin.Aligned(4, bin.Remainder),
-	}),
-};
-
 function readCompressed(spec: bin.Type) {
 	return {
-		from: (data: Uint8Array) => bin.decompress('deflate')(data).then(decompressed =>
+		to: (data: Uint8Array) => bin.decompress('deflate')(data).then(decompressed =>
 			bin.read(new bin.stream(decompressed), spec)
 		),
-		to: (value: bin.ReadType<typeof spec>) => {
+		from: (value: bin.ReadType<typeof spec>) => {
 			const buffer = new bin.growingStream();
 			bin.write(buffer, spec, value);
 			return bin.compress('deflate')(buffer.terminate());
@@ -201,8 +178,8 @@ function readCompressed(spec: bin.Type) {
 }
 
 const rle = {
-	from: (data: Int8Array, s: bin.interop._stream) => {
-		const expectedLength = s.obj.width * s.obj.height;
+	to: (data: Int8Array, s: bin.interop._stream) => {
+		const expectedLength = s.obj.obj.obj.width;// * s.obj.obj.obj.height;
 		const out = new Uint8Array(expectedLength);
 		let d = 0;
 
@@ -225,11 +202,11 @@ const rle = {
 
 		return out;
 	},
-	to: (value: Uint8Array) => value as any as Int8Array
+	from: (value: Uint8Array) => value as any as Int8Array
 };
 
 const prediction = {
-	from: (data: bin.utils.TypedArray<number>, s: bin.interop._stream) => {
+	to: (data: bin.utils.TypedArray<number>, s: bin.interop._stream) => {
 		const width = s.obj.width;
 		const height = data.length / width;
 		const stride = width * data.constructor.prototype.BYTES_PER_ELEMENT;
@@ -246,7 +223,53 @@ const prediction = {
 		}
 		return data;
 	},
-	to: (value: bin.utils.TypedArray<number>) => value
+	from: (value: bin.utils.TypedArray<number>) => value
+};
+
+const PSDPixels = bin.Switch(bin.as(u16, bin.EnumString(PSDCompression)), {
+	Raw: {
+		channelData: bin.FuncType(s => bin.Buffer(s => s.obj.obj.width * s.obj.obj.height,  bin.utils.UintTypedArray(s.obj.obj.depth)))
+	},
+	RLE: {
+		scanlineLengths: bin.Buffer(s => s.obj.obj.height, bin.utils.Uint16beArray),
+		channelData: bin.as(bin.Array(s => s.obj.obj.height,
+			bin.as(bin.Buffer(s=>
+				s.obj.obj.scanlineLengths[s.obj.length], Int8Array), rle)
+		), concatenateBuffers)
+	},
+	Zip: {
+		channelData: bin.as(bin.Remainder, readCompressed(
+			bin.FuncType(s => bin.Buffer(s => s.obj.obj.width * s.obj.obj.height,  bin.utils.UintTypedArray(s.obj.obj.depth)))
+		))
+	},
+	ZipPrediction: {
+		channelData: bin.as(bin.Remainder, readCompressed(
+			bin.as(bin.FuncType(s => bin.Buffer(s => s.obj.obj.width * s.obj.obj.height,  bin.utils.UintTypedArray(s.obj.obj.depth))), prediction)
+		))
+	},
+});
+
+const PSDLayerRecord = {
+	top:			i32,
+	left:			i32,
+	bottom:			i32,
+	right:			i32,
+	channelInfo:	bin.Array(u16, {
+		id:		i16,
+		length:	u32,
+	}),
+	blendSig:		bin.String(4),
+	blendMode:		bin.String(4),
+	opacity:		u8,
+	clipping:		u8,
+	flags:			u8,
+	filler:			u8,
+	extraData:		bin.Size(u32, {
+		layerMaskData:			bin.Buffer(u32, Uint8Array),
+		layerBlendingRanges:	bin.Buffer(u32, Uint8Array),
+		name: 					bin.String(u8, 'latin1', true),
+		additionalLayerInfo:	bin.Aligned(4, bin.Remainder),
+	}),
 };
 
 const PSDSpec = {
@@ -277,31 +300,7 @@ const PSDSpec = {
 			kind:				u8,
 		}, true),
 	}),
-
-	compression: 			bin.as(u16, bin.EnumString(PSDCompression)),
-	_: bin.Switch('compression', {
-		Raw: {
-			channelData: bin.Array('channels', bin.FuncType(s => bin.Buffer(s => s.obj.width * s.obj.height,  bin.utils.UintTypedArray(s.obj.depth))))
-		},
-		RLE: {
-			scanlineLengths: bin.Array('channels', bin.Buffer(s => s.obj.height, bin.utils.Uint16beArray)),
-			channelData: bin.Array('channels',
-				bin.as(bin.Array('height',
-					bin.as(bin.Buffer(s=>s.obj.scanlineLengths[s.obj.obj.array.length][s.obj.array.length], Int8Array), rle)
-				), concatenateBuffers)
-			),
-		},
-		Zip: {
-			channelData: bin.as(bin.Remainder, readCompressed(bin.Array('channels',
-				bin.FuncType(s => bin.Buffer(s => s.obj.width * s.obj.height,  bin.utils.UintTypedArray(s.obj.depth)))
-			)))
-		},
-		ZipPrediction: {
-			channelData: bin.as(bin.Remainder, readCompressed(bin.Array('channels',
-				bin.as(bin.FuncType(s => bin.Buffer(s => s.obj.width * s.obj.height,  bin.utils.UintTypedArray(s.obj.depth))), prediction)
-			)))
-		},
-	}),
+	body: bin.Remainder
 };
 
 export type PSDSpec = bin.ReadType<typeof PSDSpec>;
@@ -314,72 +313,83 @@ const PSDMaskNames = [
 	'clippingPath',		//-5,
 ] as const;
 
-class LayerImage extends BaseImage {
+class LayerImage extends Image {
 	constructor(layer: bin.ReadType<typeof PSDLayerRecord>, imageData: Uint8Array, psd: PSD) {
-		const planes: Record<PlaneName, Plane> = {} as any;
-		let offset = 0;
+		const width		= layer.right - layer.left;
+		const height	= layer.bottom - layer.top;
+		const depth		= psd.psd.depth;
+		super('2d', width, height);
+
 		const planeNames = Object.keys(psd.planes) as PlaneName[];
+		let offset = 0;
 		for (const channel of layer.channelInfo) {
-			const id = channel.id < 0
-				? PSDMaskNames[channel.id + 1] as PlaneName
-				: planeNames[channel.id];
-			planes[id] = {
-				width: layer.right - layer.left,
-				height: layer.bottom - layer.top,
-				mips: [imageData.subarray(offset, offset + channel.length)]
+			const pixels	= new bin.stream(imageData.subarray(offset, offset + channel.length)).read(PSDPixels, {width, height, depth});
+			this.planes[channel.id < 0 ? PSDMaskNames[channel.id + 1] as PlaneName : planeNames[channel.id]] = {
+				width, height,
+				getPixels: async _options => pixels.channelData
 			};
 			offset += channel.length;
 		}
-		super('2d', layer.right - layer.left, layer.bottom - layer.top, planes);
 	}
 	async getPixels(options: Options): Promise<Result> {
 		return getPixels(this, options);
 	}
 };
 
-export class PSD extends BaseImage {
-	constructor(
-		width: number,
-		height: number,
-		planes: {[K in PlaneName]?: Plane;},
-		public paletteData?: {r: Uint8Array, g: Uint8Array, b: Uint8Array},
-		public layerAndMaskInfo?: PSDSpec['layerAndMaskInfo']
-	) {
-		super('2d', width, height, planes);
+export class PSD extends Image {
+
+	constructor(public psd: PSDSpec) {
+		const width = psd.width, height = psd.height;
+		super('2d', width, height);
+
+		const pixels	= new bin.stream(psd.body).read(PSDPixels, {width, height: height * psd.channels, depth: psd.depth});
+		const planeNames = PSDPlanes[psd.colorMode];
+
+		for (let i = 0; i < psd.channels; i++)
+			this.planes[i < planeNames.length ? planeNames[i] : 'A'] = {width, height, getPixels: async _options => pixels.channelData.subarray(width * height * i, width * height * (i + 1))};
+
+		if (this.psd.colorModeData)
+			this.unpalette = i => [this.psd.colorModeData!.r[i], this.psd.colorModeData!.g[i], this.psd.colorModeData!.b[i]];
 	}
 
-
-	getLayer(layer: number) {
-		if (!this.layerAndMaskInfo || !this.layerAndMaskInfo.layerInfo)
+	getLayer(layer: number|string) {
+		const layerInfo = this.psd.layerAndMaskInfo?.layerInfo;
+		if (!layerInfo)
 			return undefined;
 
-		const layers = this.layerAndMaskInfo.layerInfo.layers;
-		if (layer < 0 || layer >= layers.length)
-			return undefined;
-
+		const layers = layerInfo.layers;
 		let offset = 0;
-		for (let i = 0; i < layer; i++) {
-			for (const channel of layers[i].channelInfo)
-				offset += channel.length;
-		}
 
-		return new LayerImage(layers[layer], this.layerAndMaskInfo.layerInfo.imageData.subarray(offset), this);
+		if (typeof layer === 'string') {
+			for (const i of layers) {
+				for (const channel of i.channelInfo)
+					offset += channel.length;
+				if (i.extraData.name === layer)
+					return new LayerImage(i, layerInfo.imageData.subarray(offset), this);
+			}
+		} else if (layer >= 0 && layer < layers.length) {
+			for (let i = 0; i < layer; i++) {
+				for (const channel of layers[i].channelInfo)
+					offset += channel.length;
+			}
+
+			return new LayerImage(layers[layer], layerInfo.imageData.subarray(offset), this);
+		}
+		return undefined;
 	}
 
 	async getPixels(options: Options): Promise<Result> {
-		return getPixels(this, options, this.paletteData ? color => [this.paletteData!.r[color], this.paletteData!.g[color], this.paletteData!.b[color]] : undefined);
+		let image = this as Image;
+		if (options.layer !== undefined) {
+			const layer = this.getLayer(options.layer);
+			if (!layer)
+				throw new Error(`Layer ${options.layer} not found`);
+			image = layer;
+		}
+		return getPixels(image, options, this.unpalette);
 	}
 
 	static async load(data: Uint8Array): Promise<PSD> {
-		const psd		= bin.read(new bin.stream(data), PSDSpec);
-		const planes: Record<PlaneName, any> = {} as any;
-		const planeNames = PSDPlanes[psd.colorMode];
-		for (let i = 0; i < psd.channels; i++) {
-			const planeName = i < planeNames.length ? planeNames[i] : 'Alpha';
-			planes[planeName] = psd.channelData[i];
-		}
-		return new PSD(psd.width, psd.height, planes, psd.colorModeData, psd.layerAndMaskInfo);
+		return new PSD(bin.read(new bin.stream(data), PSDSpec));
 	}
 }
-
-
