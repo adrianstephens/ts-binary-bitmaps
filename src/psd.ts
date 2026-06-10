@@ -1,5 +1,5 @@
 import * as bin from '@isopodlabs/binary';
-import {Image, Options, Result, PlaneName, getPixels, concatenateBuffers} from './common';
+import {Image, Options, Result, PlaneName, getPixels} from './common';
 
 const u8 = bin.UINT8;
 const u16 = bin.UINT16_BE;
@@ -206,7 +206,7 @@ const rle = {
 };
 
 const prediction = {
-	to: (data: bin.utils.TypedArray<number>, s: bin.interop._stream) => {
+	to: (data: bin.typedArray.TypedArray<number>, s: bin.interop._stream) => {
 		const width = s.obj.width;
 		const height = data.length / width;
 		const stride = width * data.constructor.prototype.BYTES_PER_ELEMENT;
@@ -223,28 +223,28 @@ const prediction = {
 		}
 		return data;
 	},
-	from: (value: bin.utils.TypedArray<number>) => value
+	from: (value: bin.typedArray.TypedArray<number>) => value
 };
 
 const PSDPixels = bin.Switch(bin.as(u16, bin.EnumString(PSDCompression)), {
 	Raw: {
-		channelData: bin.FuncType(s => bin.Buffer(s => s.obj.obj.width * s.obj.obj.height,  bin.utils.UintTypedArray(s.obj.obj.depth)))
+		channelData: bin.FuncType(s => bin.Buffer(s => s.obj.obj.width * s.obj.obj.height,  bin.typedArray.Uint(s.obj.obj.depth)))
 	},
 	RLE: {
-		scanlineLengths: bin.Buffer(s => s.obj.obj.height, bin.utils.Uint16beArray),
+		scanlineLengths: bin.Buffer(s => s.obj.obj.height, bin.typedArray.Uint16be),
 		channelData: bin.as(bin.Array(s => s.obj.obj.height,
 			bin.as(bin.Buffer(s=>
 				s.obj.obj.scanlineLengths[s.obj.length], Int8Array), rle)
-		), concatenateBuffers)
+		), bin.typedArray.concatenate)
 	},
 	Zip: {
 		channelData: bin.as(bin.Remainder, readCompressed(
-			bin.FuncType(s => bin.Buffer(s => s.obj.obj.width * s.obj.obj.height,  bin.utils.UintTypedArray(s.obj.obj.depth)))
+			bin.FuncType(s => bin.Buffer(s => s.obj.obj.width * s.obj.obj.height,  bin.typedArray.Uint(s.obj.obj.depth)))
 		))
 	},
 	ZipPrediction: {
 		channelData: bin.as(bin.Remainder, readCompressed(
-			bin.as(bin.FuncType(s => bin.Buffer(s => s.obj.obj.width * s.obj.obj.height,  bin.utils.UintTypedArray(s.obj.obj.depth))), prediction)
+			bin.as(bin.FuncType(s => bin.Buffer(s => s.obj.obj.width * s.obj.obj.height,  bin.typedArray.Uint(s.obj.obj.depth))), prediction)
 		))
 	},
 });

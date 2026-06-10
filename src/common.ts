@@ -4,17 +4,6 @@ import * as bin from '@isopodlabs/binary';
 // helpers
 //-----------------------------------------------------------------------------
 
-export function concatenateBuffers<T extends bin.utils.TypedArray>(buffers: T[]): T {
-	const out 	= new ArrayBuffer(buffers.reduce((sum, buf) => sum + buf.byteLength, 0));
-	const out8	= new Uint8Array(out);
-	let offset = 0;
-	for (const buf of buffers) {
-		out8.set(new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength), offset);
-		offset += buf.byteLength;
-	}
-	return new (buffers[0].constructor as bin.utils.TypedArrayConstructor<T>)(out);
-}
-
 export function clamp8(x: number) {
 	return x < 0 ? 0 : x > 255 ? 255 : x;
 }
@@ -25,7 +14,7 @@ function gamma8(x: number) {
 	return clamp8(Math.round(gamma(x) * 255));
 }
 
-export function to255(bits: number) : bin.utils.BitAdapter<number, number> {
+export function to255(bits: number) : bin.bitfields.BitAdapter<number, number> {
 	const s = 255 / ((1 << bits) - 1) | 0;
 	return {
 		bits,
@@ -129,7 +118,7 @@ export interface Result {
 	plane:	PlaneName;
 	width:	number;
 	height: number;
-	pixels: bin.utils.TypedArray<number>;
+	pixels: bin.typedArray.TypedArray<number>;
 }
 
 export interface Plane {
@@ -137,7 +126,7 @@ export interface Plane {
 	height:	number;
 	depth?:	number;
 	mips?:	number;
-	getPixels?(options: Options): Promise<bin.utils.TypedArray<number>>;
+	getPixels?(options: Options): Promise<bin.typedArray.TypedArray<number>>;
 }
 
 export class Image {
@@ -163,7 +152,7 @@ export class Image {
 				plane: options.plane,
 				width: this.width,
 				height: this.height * results.length,
-				pixels: concatenateBuffers(results.map(r => r!.pixels)),
+				pixels: bin.typedArray.concatenate(results.map(r => r!.pixels)),
 			};
 		}
 		return getPixels(this, options, this.unpalette);
@@ -214,7 +203,7 @@ export async function convertPlanes(outName: PlaneName, planes: Plane[], width: 
 	return {plane: outName, width, height, pixels: outPixels};
 }
 
-export async function fillChannel(result: Result, bpp: number, alpha: bin.utils.TypedArray<number> | number, chan: number) {
+export async function fillChannel(result: Result, bpp: number, alpha: bin.typedArray.TypedArray<number> | number, chan: number) {
 	if (typeof alpha === 'number') {
 		for (let j = chan; j < result.pixels.length; j += bpp)
 			result.pixels[j] = 255;

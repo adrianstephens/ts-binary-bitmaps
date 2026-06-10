@@ -1,10 +1,10 @@
 import * as bin from '@isopodlabs/binary';
-import {Image, Options, Result, concatenateBuffers} from './common';
+import {Image, Options, Result} from './common';
 
 const u8 = bin.UINT8;
 const u16 = bin.UINT16_LE;
 
-const Pixel24Array	= bin.utils.BitFieldsTypedArray({ b: 8, g: 8, r: 8 } as const);
+const Pixel24Array	= bin.typedArray.BitFields({ b: 8, g: 8, r: 8 } as const);
 
 //-----------------------------------------------------------------------------
 // GIF
@@ -43,7 +43,7 @@ function decompressGIFLZW(minCodeSize: number, data: Uint8Array, out: Uint8Array
 	const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
 
 	while (bit + codeSize <= data.length * 8) {
-		const code = bin.utils.getUintBits(dv, bit, codeSize, true);
+		const code = bin.typedArray.getUintBits(dv, bit, codeSize, true);
 		bit += codeSize;
 
 		if (code === clear) {
@@ -90,7 +90,7 @@ function decompressGIFLZW(minCodeSize: number, data: Uint8Array, out: Uint8Array
 const GIFSubBlocks = bin.as(bin.RemainingArray(bin.FuncType(s => {
 	const blockSize = bin.read(s, u8);
 	return blockSize ? bin.Buffer(blockSize) : undefined;
-})), concatenateBuffers);
+})), bin.typedArray.concatenate);
 
 const GIFImage = {
 	left:			u16,
@@ -202,7 +202,7 @@ const GIFSpec = {
 };
 
 class GIFFrame extends Image {
-	constructor(img: bin.ReadType<typeof GIFImage>, public delay: number, globalPalette: bin.utils.TypedElement<typeof Pixel24Array>) {
+	constructor(img: bin.ReadType<typeof GIFImage>, public delay: number, globalPalette: bin.typedArray.TypedElement<typeof Pixel24Array>) {
 		const {width, height} = img;
 		super('2d', width, height, {
 			I: {

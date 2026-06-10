@@ -1,11 +1,11 @@
 import * as bin from '@isopodlabs/binary';
-import {Image, Options, PlaneName, concatenateBuffers} from './common';
+import {Image, Options, PlaneName} from './common';
 
 const u8 = bin.UINT8;
 const u16be = bin.UINT16_BE;
 const u32be = bin.UINT32_BE;
 
-const Pixel32Array	= bin.utils.BitFieldsTypedArray({ b: 8, g: 8, r: 8, a: 8 } as const);
+const Pixel32Array	= bin.typedArray.BitFields({ b: 8, g: 8, r: 8, a: 8 } as const);
 
 //-----------------------------------------------------------------------------
 // PNG
@@ -157,11 +157,11 @@ const PNGPlanes: (PlaneName|undefined)[] = [
 ];
 
 export class PNG extends Image {
-	palette?: bin.utils.TypedArray<{r: number, g: number, b: number, a: number }>;
+	palette?: bin.typedArray.TypedArray<{r: number, g: number, b: number, a: number }>;
 	colorType: number;
 	bitDepth: number;
 
-	constructor(ihdr: Extract<PNGChunk, {type: "IHDR"}>, pixels: Uint8Array, palette?: bin.utils.TypedArray<{r: number, g: number, b: number, a: number }>) {
+	constructor(ihdr: Extract<PNGChunk, {type: "IHDR"}>, pixels: Uint8Array, palette?: bin.typedArray.TypedArray<{r: number, g: number, b: number, a: number }>) {
 		const {width, height, colorType, bitDepth} = ihdr;
 		super('2d', width, height);
 		this.planes[PNGPlanes[colorType]!] = {
@@ -188,7 +188,7 @@ export class PNG extends Image {
 			throw new Error('PNG missing IHDR chunk');
 
 		// Concatenate all IDAT chunks
-		const compressed = concatenateBuffers(png.chunks.filter(c => c.type === 'IDAT').map(c => c.data));
+		const compressed = bin.typedArray.concatenate(png.chunks.filter(c => c.type === 'IDAT').map(c => c.data));
 		
 		// Decompress and unfilter
 		const raw		= await bin.decompress('deflate')(compressed);

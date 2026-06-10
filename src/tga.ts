@@ -1,5 +1,5 @@
 import * as bin from '@isopodlabs/binary';
-import {Image, putRgb, concatenateBuffers, to255} from './common';
+import {Image, putRgb, to255} from './common';
 
 const u8  = bin.UINT8;
 const u16 = bin.UINT16_LE;
@@ -19,9 +19,9 @@ const TGAColorMapType = {
 	Present:		1,
 } as const;
 
-const BGR15Array	= bin.utils.BitFieldsTypedArray({ b: to255(5), g: to255(5), r: to255(5), x: 1 } as const);
-const BGR24Array	= bin.utils.BitFieldsTypedArray({ b: 8, g: 8, r: 8 } as const);
-const BGRA32Array	= bin.utils.BitFieldsTypedArray({ b: 8, g: 8, r: 8, a: 8 } as const);
+const BGR15Array	= bin.typedArray.BitFields({ b: to255(5), g: to255(5), r: to255(5), x: 1 } as const);
+const BGR24Array	= bin.typedArray.BitFields({ b: 8, g: 8, r: 8 } as const);
+const BGRA32Array	= bin.typedArray.BitFields({ b: 8, g: 8, r: 8, a: 8 } as const);
 
 function decodeRLE(raw: Uint8Array, bytesPerPixel: number, numPixels: number): Uint8Array {
 	const out = new Uint8Array(numPixels * bytesPerPixel);
@@ -43,7 +43,7 @@ function decodeRLE(raw: Uint8Array, bytesPerPixel: number, numPixels: number): U
 	return out;
 }
 
-function RLEPixels<T extends bin.utils.TypedArray<any>>(arrayType: bin.utils.TypedArrayConstructor<T>) {
+function RLEPixels<T extends bin.typedArray.TypedArray<any>>(arrayType: bin.typedArray.TypedArrayConstructor<T>) {
 	const bpp = arrayType.BYTES_PER_ELEMENT!;
 	return {pixels: bin.as(bin.Remainder, (raw: Uint8Array, s) => {
 		const {width, height} = s.obj.obj;
@@ -51,7 +51,7 @@ function RLEPixels<T extends bin.utils.TypedArray<any>>(arrayType: bin.utils.Typ
 	})};
 }
 
-function rawPixels<T extends bin.utils.TypedArray<any>>(arrayType: bin.utils.TypedArrayConstructor<T>) {
+function rawPixels<T extends bin.typedArray.TypedArray<any>>(arrayType: bin.typedArray.TypedArrayConstructor<T>) {
 	return {pixels: bin.Buffer(s => s.obj.obj.width * s.obj.obj.height, arrayType)};
 }
 
@@ -114,7 +114,7 @@ export class TGA extends Image {
 			case TGAImageType.Grayscale:
 			case TGAImageType.RLEGrayscale:
 				this.planes.Y = { width, height, getPixels: async () =>
-					concatenateBuffers(Array.from({length: height}, (_, row) => tga.pixels.subarray(flipRow(row) * width, (flipRow(row) + 1) * width)))
+					bin.typedArray.concatenate(Array.from({length: height}, (_, row) => tga.pixels.subarray(flipRow(row) * width, (flipRow(row) + 1) * width)))
 				};
 				break;
 
@@ -124,7 +124,7 @@ export class TGA extends Image {
 				const channels = hasAlpha ? 4 : 3;
 				this.planes[hasAlpha ? 'RGBA' : 'RGB'] = {
 					width, height,
-					getPixels: async() => concatenateBuffers(Array.from({length: height}, (_, row) => {
+					getPixels: async() => bin.typedArray.concatenate(Array.from({length: height}, (_, row) => {
 						const src = tga.pixels.subarray(flipRow(row) * width, (flipRow(row) + 1) * width);
 						const out = new Uint8Array(width * channels);
 						for (let i = 0, j = 0; i < src.length; i++, j += channels) {
@@ -149,7 +149,7 @@ export class TGA extends Image {
 				};
 				this.planes.I = {
 					width, height,
-					getPixels: async() => concatenateBuffers(Array.from({length: height}, (_, row) => tga.pixels.subarray(flipRow(row) * width, (flipRow(row) + 1) * width)))
+					getPixels: async() => bin.typedArray.concatenate(Array.from({length: height}, (_, row) => tga.pixels.subarray(flipRow(row) * width, (flipRow(row) + 1) * width)))
 				};
 				break;
 			}

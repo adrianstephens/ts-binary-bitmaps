@@ -1,5 +1,5 @@
 import * as bin from '@isopodlabs/binary';
-import {concatenateBuffers, Image, Options, Result, PlaneName, to255, clamp8, greyToRgb, putRgb, labToRgb, cmykToRgb, convertInterleaved, convertPlanes, fillChannel} from './common';
+import {Image, Options, Result, PlaneName, to255, clamp8, greyToRgb, putRgb, labToRgb, cmykToRgb, convertInterleaved, convertPlanes, fillChannel} from './common';
 import { JPEG } from './jpeg';
 
 const u8 = bin.UINT8;
@@ -272,7 +272,7 @@ function chunkGetter(data: Uint8Array, tags: Tags): (bitsPerPixel: number, plane
 		case TIFFCompression.JPEG: {
 			const tables = tags.JPEGTables;
 			decompress = async data => {
-				const jpg = JPEG.load(concatenateBuffers([tables!, data]));
+				const jpg = JPEG.load(bin.typedArray.concatenate([tables!, data]));
 				const result = await jpg.getPixels({plane: 'YCbCr'});
 				return new Uint8Array(result.pixels);
 			};
@@ -368,7 +368,7 @@ export class TIFF extends Image {
 
 		const bitsPerSample		= tags.BitsPerSample[0];
 		const samplesPerPixel	= tags.SamplesPerPixel;
-		const arrayType			= bin.utils.BitFieldsTypedArray(to255(bitsPerSample));
+		const arrayType			= bin.typedArray.BitFields(to255(bitsPerSample));
 		const numPixels			= width * height;
 		const photometric		= tags.PhotometricInterpretation;
 
@@ -483,7 +483,7 @@ export class TIFFMulti extends Image {
 			plane: options.plane,
 			width: this.width,
 			height: this.height * results.length,
-			pixels: concatenateBuffers(results.map(r => r.pixels)),
+			pixels: bin.typedArray.concatenate(results.map(r => r.pixels)),
 		};
 	}
 }

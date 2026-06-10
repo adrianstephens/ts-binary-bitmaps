@@ -33,7 +33,7 @@ const JPEGMarker = {
 const DQTTable = {
 	packed:	bin.Merge(bin.BitFields({id: 4, size: 4} as const)),
 	values:	bin.Optional(s => s.obj.size,
-		bin.Buffer(64, bin.utils.Uint16beArray),
+		bin.Buffer(64, bin.typedArray.Uint16be),
 		bin.Buffer(64, Uint8Array)
 	),
 };

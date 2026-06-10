@@ -9,11 +9,11 @@ const u16 = bin.UINT16_LE;
 const u32 = bin.UINT32_LE;
 const s32 = bin.INT32_LE;
 
-const Pixel16Array	= bin.utils.BitFieldsTypedArray({ b: to255(5), g: to255(5), r: to255(5), x: 1 } as const);
-const Pixel24Array	= bin.utils.BitFieldsTypedArray({ b: 8, g: 8, r: 8 } as const);
-const Pixel32Array	= bin.utils.BitFieldsTypedArray({ b: 8, g: 8, r: 8, a: 8 } as const);
-const Uint1Array	= bin.utils.UintTypedArray(1);
-const Uint4Array	= bin.utils.UintTypedArray(4);
+const Pixel16Array	= bin.typedArray.BitFields({ b: to255(5), g: to255(5), r: to255(5), x: 1 } as const);
+const Pixel24Array	= bin.typedArray.BitFields({ b: 8, g: 8, r: 8 } as const);
+const Pixel32Array	= bin.typedArray.BitFields({ b: 8, g: 8, r: 8, a: 8 } as const);
+const Uint1Array	= bin.typedArray.Uint(1);
+const Uint4Array	= bin.typedArray.Uint(4);
 
 const BMPcompression = {
 	RGB:      		0,
@@ -86,7 +86,7 @@ export class BMP extends Image {
 					async getPixels(options: Options) {
 						const out = new Uint8Array(width * height);
 						for (let row = 0; row < height; row++)
-							out.set(bmp.pixels[height - 1 - row] as bin.utils.TypedArray<number>, row * width);
+							out.set(bmp.pixels[height - 1 - row] as bin.typedArray.TypedArray<number>, row * width);
 						return out;
 					}
 				};

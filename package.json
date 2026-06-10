@@ -40,8 +40,8 @@
 	],
 	"author": "Adrian Stephens",
 	"license": "MIT",
-	"version": "1.9.1",
+	"version": "1.10.0",
 	"dependencies": {
-		"@isopodlabs/binary": "^1.11.0"
+		"@isopodlabs/binary": "^2.0.1"
 	}
 }
