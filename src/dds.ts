@@ -138,13 +138,13 @@ const rgb565 = bin.bitfields.BitFields(0, { r: to255(5), g: to255(6), b: to255(5
 const BC1 = {
 	color0:	16,
 	color1:	16,
-	indices: bin.bitfields.BitArray(16, 2),
+	indices: bin.bitfields.Array(16, 2),
 } as const;
 
 const BC4 = {
 	a0:		8,
 	a1:		8,
-	indices: bin.bitfields.BitArray(16, 3),
+	indices: bin.bitfields.Array(16, 3),
 } as const;
 
 function BCcolors(color0: number, color1: number, alt = false) {
@@ -193,7 +193,7 @@ const r16g16		= bin.typedArray.BitFields({ r: 16, g: 16 } as const);
 const r4g4			= bin.typedArray.BitFields({ r: 4,	g: 4 } as const);
 const g4r4			= bin.typedArray.BitFields({ g: 4,	r: 4 } as const);
 
-const BC1BlockPixels = bin.bitfields.BitFieldChain(BC1, {
+const BC1BlockPixels = bin.bitfields.Chain(BC1, {
 	to(block) {
 		const alt		= block.color0 <= block.color1;
 		const colors	= BCcolors(block.color0, block.color1, alt);
@@ -207,7 +207,7 @@ const BC1BlockPixels = bin.bitfields.BitFieldChain(BC1, {
 	from() { throw new Error('DXT1 block write not supported'); },
 });
 
-const BC2BlockPixels = bin.bitfields.BitFieldChain({alpha: bin.bitfields.BitArray(16,4), col: BC1} as const, {
+const BC2BlockPixels = bin.bitfields.Chain({alpha: bin.bitfields.Array(16,4), col: BC1} as const, {
 	to(block) {
 		const colors	= BCcolors(block.col.color0, block.col.color1, false);
 		const out		= new r8g8b8a8(16);
@@ -218,7 +218,7 @@ const BC2BlockPixels = bin.bitfields.BitFieldChain({alpha: bin.bitfields.BitArra
 	from() { throw new Error('DXT3 block write not supported'); },
 });
 
-const BC3BlockPixels = bin.bitfields.BitFieldChain({alpha: BC4, col: BC1} as const, {
+const BC3BlockPixels = bin.bitfields.Chain({alpha: BC4, col: BC1} as const, {
 	to(block) {
 		const alphas	= BCalphas(block.alpha.a0, block.alpha.a1);
 		const colors	= BCcolors(block.col.color0, block.col.color1, false);
@@ -230,7 +230,7 @@ const BC3BlockPixels = bin.bitfields.BitFieldChain({alpha: BC4, col: BC1} as con
 	from() { throw new Error('DXT5 block write not supported'); }
 });
 
-const BC4BlockPixels = bin.bitfields.BitFieldChain(BC4, {
+const BC4BlockPixels = bin.bitfields.Chain(BC4, {
 	to(block) {
 		const alphas	= BCalphas(block.a0, block.a1);
 		const out		= new Uint8Array(16);
@@ -241,7 +241,7 @@ const BC4BlockPixels = bin.bitfields.BitFieldChain(BC4, {
 	from() { throw new Error('BC4 block write not supported'); }
 });
 
-const BC5BlockPixels = bin.bitfields.BitFieldChain({r: BC4, g: BC4} as const, {
+const BC5BlockPixels = bin.bitfields.Chain({r: BC4, g: BC4} as const, {
 	to(block) {
 		const reds	= BCalphas(block.r.a0, block.r.a1);
 		const greens	= BCalphas(block.g.a0, block.g.a1);
@@ -575,7 +575,7 @@ export class DDS extends Image {
 			: caps2.CUBEMAP							? 'cube'
 			: dds.dx10 && dds.dx10.arraySize > 1	? '2d-array'
 			: '2d';
-		const depth	= type === '2d-array'	? dds.dx10.arraySize
+		const depth	= type === '2d-array'	? dds.dx10!.arraySize
 					: type === 'cube'		? 6
 					: dds.header.depth || 1;
 
@@ -583,7 +583,7 @@ export class DDS extends Image {
 		this.depth		= depth;
 		if (dds.palette)
 			this.unpalette	= i => {
-				const p = dds.palette[i];
+				const p = dds.palette![i];
 				return [p.r, p.g, p.b/*, p.a*/];
 			};
 	}

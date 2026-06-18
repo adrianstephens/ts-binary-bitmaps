@@ -43,7 +43,7 @@ function decompressGIFLZW(minCodeSize: number, data: Uint8Array, out: Uint8Array
 	const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
 
 	while (bit + codeSize <= data.length * 8) {
-		const code = bin.typedArray.getUintBits(dv, bit, codeSize, true);
+		const code = bin.bit.getUint(dv, bit, codeSize, true);
 		bit += codeSize;
 
 		if (code === clear) {
@@ -232,7 +232,7 @@ export class GIF extends Image {
 					delay = b.data.delay;
 
 			} else if (b.token === GIFBlockType.image) {
-				frames.push(new GIFFrame(b, delay, gif.globalPalette));
+				frames.push(new GIFFrame(b, delay, gif.globalPalette!));
 			}
 		}
 
@@ -245,7 +245,7 @@ export class GIF extends Image {
 		}
 
 		this.unpalette = i => {
-			const col = gif.globalPalette[i];
+			const col = gif.globalPalette![i];
 			return [col.r, col.g, col.b];
 		};
 	}
